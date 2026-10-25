@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simple Meet</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#111;color:#eee;height:100vh}
+button,input{font:inherit;border-radius:8px;border:0;padding:10px 14px}
+input{background:#222;color:#eee;border:1px solid #333}
+button{background:#2b2b2b;color:#eee;cursor:pointer}button:hover{background:#3a3a3a}
+.primary{background:#2f7df6}.danger{background:#d93636}.off{background:#7a2a2a}
+#lobby{display:flex;flex-direction:column;gap:12px;max-width:340px;margin:20vh auto;padding:20px}
+#call{display:flex;height:100vh}#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#grid{flex:1;display:grid;gap:8px;padding:8px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));grid-auto-rows:1fr;overflow:auto}
+.tile{position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:160px}
+.tile video{width:100%;height:100%;object-fit:cover}
+.tile span{position:absolute;left:8px;bottom:8px;background:#0009;padding:2px 8px;border-radius:6px;font-size:13px}
+#bar{display:flex;gap:8px;justify-content:center;padding:10px;background:#181818}
+#chat{width:280px;display:flex;flex-direction:column;background:#181818;border-left:1px solid #2a2a2a}
+#log{flex:1;overflow:auto;padding:10px;font-size:14px}#log p{margin:0 0 8px}#log b{color:#7db4ff}
+#chat form{display:flex;gap:6px;padding:8px}#chat input{flex:1;min-width:0}
+@media(max-width:700px){#chat{display:none}}
+[hidden]{display:none!important}
+</style></head><body>
+<div id="lobby">
+  <h2>Simple Meet</h2>
+  <input id="name" placeholder="Your name">
+  <input id="room" placeholder="Room code">
+  <button id="join" class="primary">Join meeting</button>
+</div>
+<div id="call" hidden>
+  <div id="main"><div id="grid"></div>
+    <div id="bar">
+      <button id="mic">Mute</button><button id="cam">Stop video</button>
+      <button id="share">Share screen</button><button id="copy">Copy link</button>
+      <button id="leave" class="danger">Leave</button>
+    </div></div>
+  <div id="chat"><div id="log"></div>
+    <form id="cf"><input id="ci" placeholder="Message" autocomplete="off"><button class="primary">Send</button></form></div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
+let ws,stream,room,name,peers={};
+$('#room').value=location.hash.slice(1)||Math.random().toString(36).slice(2,8);
+
+$('#join').onclick=async()=>{
+  room=$('#room').value.trim(); name=$('#name').value.trim()||'Guest'; if(!room)return;
+  try{stream=await navigator.mediaDevices.getUserMedia({video:true,audio:true})}
+  catch(e){return alert('Camera/mic access is required (HTTPS needed): '+e.message)}
+  location.hash=room; $('#lobby').hidden=true; $('#call').hidden=false;
+  tile('me',name+' (you)',stream,true);
+  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+  ws.onopen=()=>ws.send(JSON.stringify({type:'join',room,name}));
+  ws.onmessage=e=>{const m=JSON.parse(e.data);
+    if(m.type==='peers')m.peers.forEach(p=>peer(p.id,p.name,true));
+    else if(m.type==='signal'){const p=peers[m.from]||peer(m.from,m.name,false);p.q=p.q.then(()=>handle(p,m.data))}
+    else if(m.type==='left')drop(m.id);
+    else if(m.type==='chat')log(m.name,m.text);
+    else if(m.type==='full'){alert('Room is full');location.reload()}};
+  ws.onclose=()=>log('System','Disconnected from server');
+};
+const sig=(to,data)=>ws.send(JSON.stringify({type:'signal',to,data}));
+function peer(id,pname,init){
+  const pc=new RTCPeerConnection(cfg),p={id,pc,q:Promise.resolve()};peers[id]=p;
+  stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+  pc.onicecandidate=e=>e.candidate&&sig(id,{candidate:e.candidate});
+  pc.ontrack=e=>tile(id,pname,e.streams[0]);
+  pc.onconnectionstatechange=()=>{if(['closed','failed'].includes(pc.connectionState))drop(id)};
+  if(init)pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>sig(id,{sdp:pc.localDescription}));
+  return p;
+}
+async function handle(p,d){
+  try{
+    if(d.sdp){await p.pc.setRemoteDescription(d.sdp);
+      if(d.sdp.type==='offer'){await p.pc.setLocalDescription(await p.pc.createAnswer());sig(p.id,{sdp:p.pc.localDescription})}}
+    else if(d.candidate)await p.pc.addIceCandidate(d.candidate);
+  }catch(e){console.warn(e)}
+}
+function drop(id){const p=peers[id];if(!p)return;p.pc.close();delete peers[id];$('#t-'+id)?.remove()}
+function tile(id,label,s,mute){
+  let t=$('#t-'+id);
+  if(!t){t=document.createElement('div');t.className='tile';t.id='t-'+id;
+    t.innerHTML='<video autoplay playsinline></video><span></span>';$('#grid').append(t)}
+  const v=t.querySelector('video');v.srcObject=s;v.muted=!!mute;t.querySelector('span').textContent=label;
+}
+function toggle(kind,btn,on,off){
+  const t=stream.getTracks().find(t=>t.kind===kind);if(!t)return;
+  t.enabled=!t.enabled;btn.textContent=t.enabled?on:off;btn.classList.toggle('off',!t.enabled);
+}
+$('#mic').onclick=e=>toggle('audio',e.target,'Mute','Unmute');
+$('#cam').onclick=e=>toggle('video',e.target,'Stop video','Start video');
+function setVideo(track){
+  Object.values(peers).forEach(p=>p.pc.getSenders().find(s=>s.track?.kind==='video')?.replaceTrack(track));
+  $('#t-me video').srcObject=new MediaStream([track,...stream.getAudioTracks()]);
+}
+$('#share').onclick=async()=>{
+  try{
+    const sc=await navigator.mediaDevices.getDisplayMedia({video:true}),st=sc.getVideoTracks()[0];
+    setVideo(st);st.onended=()=>setVideo(stream.getVideoTracks()[0]);
+  }catch{}
+};
+$('#copy').onclick=()=>{navigator.clipboard.writeText(location.href);$('#copy').textContent='Copied!';setTimeout(()=>$('#copy').textContent='Copy link',1500)};
+$('#leave').onclick=()=>{ws?.close();stream?.getTracks().forEach(t=>t.stop());location.reload()};
+function log(who,text){const p=document.createElement('p');p.innerHTML='<b></b>: <span></span>';
+  p.children[0].textContent=who;p.children[1].textContent=text;$('#log').append(p);$('#log').scrollTop=1e9}
+$('#cf').onsubmit=e=>{e.preventDefault();const t=$('#ci').value.trim();if(!t)return;
+  ws.send(JSON.stringify({type:'chat',text:t}));log('You',t);$('#ci').value=''};
+</script></body></html>
