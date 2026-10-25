@@ -1,5 +1,7 @@
 # Simple Meet
 
+**🔗 Live app: [Open Simple Meet](https://link-and-lantern-meetings.lovable.app)**
+
 A simple, cloud-deployable video conferencing web app. Open a link, enter a name and a room code, and talk face to face with up to 8 people from any device with a modern browser. No installs and no accounts.
 
 Built with **WebRTC** for peer-to-peer audio/video and a small **Node.js + WebSocket** server for signaling.
